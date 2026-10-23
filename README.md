@@ -13,7 +13,7 @@ Axum API + SolidJS frontend + Postgres, with types shared from Rust to TypeScrip
 
 - [Rust](https://rustup.rs) (the pinned toolchain installs automatically from `rust-toolchain.toml`)
 - [sqlx-cli](https://crates.io/crates/sqlx-cli), only needed when you change SQL: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
-- Node 22.12+ (24 recommended) and [pnpm](https://pnpm.io/installation) 10+ (`npm install -g pnpm`). A different pnpm version switches to the one pinned in `web/package.json` automatically.
+- Node 22.12+ (24 recommended) and [pnpm](https://pnpm.io/installation) 12 (`npm install -g pnpm@12`). pnpm 10 can't switch itself to 12, so upgrade it first.
 - Docker (or Podman) for Postgres
 
 ## Quick start
@@ -68,6 +68,10 @@ Queries use `sqlx::query_as!` / `query!`, so a misspelled column or a wrong type
 1. Add a migration in `server/migrations/` (`<timestamp>_name.sql`).
 2. Add a module like `todos.rs` with types and handlers, and `.merge()` its router in `lib.rs`.
 3. Run `make prepare` (query cache) and `make types` (TypeScript types), then call it from `web/src/lib/api.ts`.
+
+### Dependency age policy
+
+pnpm 12 refuses to install any package version published less than a day ago, a guard against compromised releases, which are usually caught within hours. If an install fails with `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` right after an update, wait a day, or re-resolve just the flagged packages to their previous versions with `pnpm update --depth Infinity <package>`.
 
 ### UI components
 

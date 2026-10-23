@@ -3,7 +3,7 @@
 # ---- 1. Build the Solid frontend ----
 FROM node:24-alpine AS web
 # Keep in step with "packageManager" in web/package.json.
-RUN npm install -g pnpm@10.33.2
+RUN npm install -g pnpm@12.15.0
 WORKDIR /app/web
 COPY web/package.json web/pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
