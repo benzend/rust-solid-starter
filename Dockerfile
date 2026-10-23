@@ -26,7 +26,8 @@ FROM gcr.io/distroless/cc-debian13:nonroot
 COPY --from=server /usr/local/bin/server /app/server
 COPY --from=web /app/web/dist /app/web/dist
 ENV PORT=3000 \
-    STATIC_DIR=/app/web/dist
+    STATIC_DIR=/app/web/dist \
+    LOG_FORMAT=json
 EXPOSE 3000
 # The binary probes its own /api/health (distroless has no curl).
 HEALTHCHECK --interval=10s --timeout=5s --start-period=10s --retries=3 \

@@ -1,5 +1,6 @@
 // Thin typed wrapper around fetch. The types are generated from the Rust
 // structs (`make types`), so request and response shapes can't drift.
+import { ApiRequestError } from "@/lib/errors";
 import type { ApiError } from "@/types/ApiError";
 import type { NewTodo } from "@/types/NewTodo";
 import type { Todo } from "@/types/Todo";
@@ -12,7 +13,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   });
   if (!res.ok) {
     const err = (await res.json().catch(() => ({ message: res.statusText }))) as ApiError;
-    throw new Error(err.message);
+    throw new ApiRequestError(err.message, res.status, res.headers.get("x-request-id"));
   }
   return (res.status === 204 ? undefined : await res.json()) as T;
 }

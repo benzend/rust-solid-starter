@@ -5,7 +5,7 @@ const respond = (status: number, body?: unknown) =>
   vi.fn().mockResolvedValue(
     new Response(body === undefined ? null : JSON.stringify(body), {
       status,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-request-id": "req-9" },
     }),
   );
 
@@ -30,7 +30,11 @@ describe("api", () => {
   it("throws the server's ApiError message", async () => {
     vi.stubGlobal("fetch", respond(422, { message: "Title must be 1-200 characters." }));
 
-    await expect(api.createTodo({ title: " " })).rejects.toThrow("Title must be 1-200 characters.");
+    await expect(api.createTodo({ title: " " })).rejects.toMatchObject({
+      message: "Title must be 1-200 characters.",
+      status: 422,
+      requestId: "req-9",
+    });
   });
 
   it("returns undefined for 204 No Content", async () => {

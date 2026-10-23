@@ -133,3 +133,44 @@ async fn unknown_api_route_is_json_404(db: PgPool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["message"], "Not found.");
 }
+
+// ---------- Middleware (no database needed) ----------
+
+fn panicking_app() -> Router {
+    let routes = Router::new().route(
+        "/boom",
+        axum::routing::get(|| async {
+            panic!("kaboom");
+            #[allow(unreachable_code)]
+            ""
+        }),
+    );
+    server::middleware(routes, Duration::from_secs(10))
+}
+
+#[tokio::test]
+async fn panics_become_a_json_500() {
+    let res = panicking_app()
+        .oneshot(Request::get("/boom").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(res.headers().contains_key("x-request-id"));
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(body["message"], "Something went wrong.");
+}
+
+#[tokio::test]
+async fn echoes_a_client_request_id() {
+    let res = panicking_app()
+        .oneshot(
+            Request::get("/nope")
+                .header("x-request-id", "abc-123")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.headers()["x-request-id"], "abc-123");
+}
