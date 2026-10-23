@@ -1,6 +1,8 @@
-# Load .env so DATABASE_URL etc. are available to every command.
--include .env
-export
+# .env is deliberately not included here: Make would parse it as Make syntax and
+# mangle values containing `$`. The server and sqlx-cli read .env themselves.
+# `cargo test` is the exception (#[sqlx::test] only reads the environment), so
+# its recipe loads .env through the shell, which handles quoting properly.
+with-env = set -a; [ ! -f .env ] || . ./.env; set +a;
 
 .DEFAULT_GOAL := help
 .PHONY: help setup db dev server web types prepare test check fmt build up down
@@ -31,7 +33,7 @@ prepare: db ## Refresh the .sqlx/ query cache after changing SQL (commit it)
 	cd server && cargo sqlx prepare -- --all-targets
 
 test: db types ## Run Rust and frontend tests (each Rust test gets its own database)
-	cd server && cargo test
+	$(with-env) cd server && cargo test
 	cd web && npm test
 
 check: db ## Format check, lint, type-check, and verify the .sqlx/ cache (what CI runs)
