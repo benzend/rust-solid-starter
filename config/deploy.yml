@@ -1,0 +1,83 @@
+# Kamal deploy config: https://kamal-deploy.org/docs/configuration/overview/
+#
+# ---- Make it yours ----------------------------------------------------------
+# Every value marked CHANGE ME is per-app. If you rename `service`, also update
+# the database host in .kamal/secrets (it's `<service>-db`).
+# -----------------------------------------------------------------------------
+
+service: rust-solid-starter            # CHANGE ME: names containers, volumes and the db host
+image: benzend/rust-solid-starter      # CHANGE ME: <github-owner>/<repo>, lowercase
+
+servers:
+  web:
+    - 203.0.113.10                     # CHANGE ME: your server's IP
+
+proxy:
+  host: app.example.com                # CHANGE ME: point this domain's DNS at the server first
+  ssl: true                            # free Let's Encrypt certificate, renewed automatically
+  forward_headers: true                # keep X-Forwarded-For/-Proto when ssl is on
+  app_port: 3000                       # Kamal assumes 80 otherwise
+  healthcheck:
+    path: /api/health                  # 200 only when the app can reach Postgres
+
+# The app runs its migrations on boot, before /api/health passes. Give slow
+# migrations room, and keep them backward-compatible: the old container keeps
+# serving until the new one is healthy.
+deploy_timeout: 60
+
+registry:
+  server: ghcr.io
+  username: benzend                    # CHANGE ME: your GitHub user or org
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  # Must match the server's CPU. For an ARM server (e.g. Hetzner CAX), set
+  # arm64 here and use `runs-on: ubuntu-24.04-arm` in .github/workflows/deploy.yml
+  # so the build stays native.
+  arch: amd64
+
+env:
+  clear:
+    RUST_LOG: server=info,tower_http=info
+  secret:
+    - DATABASE_URL
+
+accessories:
+  # Postgres on the same server. Deploys never restart it. To use a managed
+  # database instead, delete `db` and `backup` and set DATABASE_URL in
+  # .kamal/secrets to the provider's URL (add ?sslmode=require).
+  db:
+    image: postgres:18-alpine
+    host: 203.0.113.10                 # CHANGE ME: same IP as above
+    env:
+      clear:
+        POSTGRES_USER: app
+        POSTGRES_DB: app
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - data:/var/lib/postgresql       # Postgres 18+ path; 17 and older use /var/lib/postgresql/data
+
+  # Nightly pg_dump kept on the server for 7 days. Copy ~/<service>-backup/backups
+  # off the server too (see "Backups" in the README).
+  backup:
+    image: postgres:18-alpine          # keep the same major version as `db`
+    host: 203.0.113.10                 # CHANGE ME: same IP as above
+    env:
+      clear:
+        PGHOST: rust-solid-starter-db  # CHANGE ME: <service>-db
+        PGUSER: app
+        PGDATABASE: app
+        BACKUP_KEEP_DAYS: 7
+      secret:
+        - PGPASSWORD:POSTGRES_PASSWORD
+    files:
+      - config/db-backup.sh:/usr/local/bin/db-backup.sh
+    directories:
+      - backups:/backups
+    cmd: sh /usr/local/bin/db-backup.sh
+
+aliases:
+  logs: app logs -f
+  db: accessory exec db --interactive --reuse "psql -U app app"

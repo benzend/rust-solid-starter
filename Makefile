@@ -5,7 +5,7 @@
 with-env = set -a; [ ! -f .env ] || . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help setup db dev server web types prepare test check fmt build up down
+.PHONY: help setup db dev server web types prepare test check fmt build up down deploy
 
 help: ## Show available commands
 	@grep -E '^[a-z-]+:.*## ' Makefile | awk 'BEGIN {FS = ":.*## "}; {printf "  make %-8s %s\n", $$1, $$2}'
@@ -54,3 +54,6 @@ up: ## Run the production image + Postgres in Docker on :3000
 
 down: ## Stop Docker services (data is kept in a volume)
 	docker compose down
+
+deploy: ## Deploy with Kamal from this machine (see "Deploying" in the README)
+	kamal deploy
