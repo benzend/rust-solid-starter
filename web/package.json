@@ -6,6 +6,8 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "lint": "biome check .",
     "format": "biome check --write ."
   },
@@ -19,11 +21,15 @@
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.2",
+    "@solidjs/testing-library": "^0.8.10",
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^26.6.5",
+    "happy-dom": "^21.0.4",
     "tailwindcss": "^4.3.3",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
-    "vite-plugin-solid": "^2.11.14"
-  }
+    "vite-plugin-solid": "^2.11.14",
+    "vitest": "^5.0.5"
+  },
+  "license": "MIT OR Apache-2.0"
 }

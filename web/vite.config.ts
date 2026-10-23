@@ -1,7 +1,7 @@
 import { fileURLToPath, URL } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
-import { defineConfig } from "vite";
 import solid from "vite-plugin-solid";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   plugins: [solid(), tailwindcss()],
@@ -15,4 +15,6 @@ export default defineConfig({
     proxy: { "/api": "http://localhost:3000" },
   },
   build: { target: "es2022" },
+  // `npm test`: Vitest reuses this config, so the "@" alias and Solid JSX just work.
+  test: { environment: "happy-dom" },
 });

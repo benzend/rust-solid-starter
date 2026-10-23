@@ -26,7 +26,7 @@ pub struct AppState {
 }
 
 /// Builds the whole app: JSON API under /api, the built Solid app everywhere else.
-pub fn app(state: AppState, static_dir: &str) -> Router {
+pub fn app(state: AppState, static_dir: &str, request_timeout: Duration) -> Router {
     let api = Router::new()
         .route("/health", get(health))
         .merge(todos::router())
@@ -62,12 +62,12 @@ pub fn app(state: AppState, static_dir: &str) -> Router {
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
-            Duration::from_secs(10),
+            request_timeout,
         ))
         .layer(TraceLayer::new_for_http())
 }
 
 async fn health(State(state): State<AppState>) -> AppResult<&'static str> {
-    sqlx::query("SELECT 1").execute(&state.db).await?;
+    sqlx::query!("SELECT 1 AS ok").fetch_one(&state.db).await?;
     Ok("ok")
 }

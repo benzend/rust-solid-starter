@@ -1,15 +1,18 @@
 # Rust + Solid starter
 
+[![CI](https://github.com/benzend/rust-solid-starter/actions/workflows/ci.yml/badge.svg)](https://github.com/benzend/rust-solid-starter/actions/workflows/ci.yml)
+
 Axum API + SolidJS frontend + Postgres, with types shared from Rust to TypeScript.
 
-- **Server:** Axum 0.8, sqlx 0.9 (Postgres, migrations), Tokio
+- **Server:** Axum 0.8, sqlx 0.9 (Postgres, migrations, compile-time checked queries), Tokio
 - **Frontend:** SolidJS 1.9, @solidjs/router, Vite 8, TypeScript 7
 - **UI:** Tailwind v4 + shadcn/ui-style components (`web/src/components/ui`)
-- **Tooling:** Docker Compose, Biome, rustfmt + clippy, GitHub Actions
+- **Tooling:** Docker Compose, Biome, rustfmt + clippy, Vitest, GitHub Actions
 
 ## Prerequisites
 
-- [Rust](https://rustup.rs) (the right toolchain installs automatically from `rust-toolchain.toml`)
+- [Rust](https://rustup.rs) (the pinned toolchain installs automatically from `rust-toolchain.toml`)
+- [sqlx-cli](https://crates.io/crates/sqlx-cli), only needed when you change SQL: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 - Node 22.12+ (24 recommended)
 - Docker (or Podman) for Postgres
 
@@ -27,9 +30,10 @@ Run `make` to list every command.
 | Command | What it does |
 |---|---|
 | `make dev` | Postgres + API + UI with hot reload |
-| `make test` | Rust tests; each test gets its own throwaway database |
+| `make test` | Rust tests (each gets its own throwaway database) and Vitest |
+| `make prepare` | Refresh the `.sqlx/` query cache after changing SQL |
 | `make types` | Regenerate TypeScript types from Rust structs |
-| `make check` | fmt, clippy, Biome, and type-check (same as CI) |
+| `make check` | fmt, clippy, `.sqlx/` cache check, Biome, and type-check (same as CI) |
 | `make up` | Build and run the production image + Postgres on :3000 |
 
 ## How it fits together
@@ -37,13 +41,14 @@ Run `make` to list every command.
 ```
 server/
   migrations/        SQL migrations, compiled in and applied on startup
+  .sqlx/             cached query metadata for offline builds (generated, commit it)
   src/lib.rs         router, middleware (compression, timeout, security headers)
   src/todos.rs       example resource: shared types + handlers
   src/error.rs       AppError -> JSON { message } responses
   tests/api.rs       API tests against a real database
 web/
   src/types/         GENERATED from Rust by ts-rs; don't edit by hand
-  src/lib/api.ts     typed fetch wrapper
+  src/lib/api.ts     typed fetch wrapper (+ api.test.ts)
   src/components/ui/ shadcn-style components (yours to edit)
   src/routes/        pages; non-home routes are lazy-loaded
 ```
@@ -54,11 +59,15 @@ In production, the single Rust binary serves both `/api/*` and the built Solid a
 
 Structs marked `#[derive(TS)] #[ts(export)]` in Rust become TypeScript types in `web/src/types/` when you run `make types`. If you rename or retype a field in Rust, the frontend fails to type-check until you update it. CI also fails if you forget to regenerate.
 
+### Compile-time checked SQL
+
+Queries use `sqlx::query_as!` / `query!`, so a misspelled column or a wrong type is a build error, not a runtime one. Builds read the committed `server/.sqlx/` cache rather than a live database (`SQLX_OFFLINE` is set in `server/.cargo/config.toml`), so `cargo build`, Docker, and editors work without Postgres running. When you add or change a query, run `make prepare` and commit `.sqlx/`. CI fails if the cache is out of date.
+
 ### Adding a feature
 
 1. Add a migration in `server/migrations/` (`<timestamp>_name.sql`).
 2. Add a module like `todos.rs` with types and handlers, and `.merge()` its router in `lib.rs`.
-3. Run `make types`, then call it from `web/src/lib/api.ts`.
+3. Run `make prepare` (query cache) and `make types` (TypeScript types), then call it from `web/src/lib/api.ts`.
 
 ### UI components
 
@@ -66,7 +75,7 @@ Components follow shadcn/ui conventions: Tailwind classes, `cva` variants, and t
 
 ## Production
 
-`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` (and optionally `PORT`, `RUST_LOG`) in your host's environment. It runs anywhere that runs containers, such as Fly.io, Railway, Render, or a VPS.
+`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` in your host's environment. Optional: `PORT` (3000), `RUST_LOG`, `DB_MAX_CONNECTIONS` (10), `REQUEST_TIMEOUT_SECS` (10). The image has a `HEALTHCHECK` that runs `server --health-check`, which probes `/api/health` (and through it, the database). It runs anywhere that runs containers, such as Fly.io, Railway, Render, or a VPS.
 
 Production checklist:
 
@@ -76,6 +85,9 @@ Production checklist:
 
 ## Upgrades worth considering
 
-- **Compile-time checked SQL:** switch `sqlx::query_as::<_, Todo>("...")` to `sqlx::query_as!(Todo, "...")`. Queries are then verified against the real schema at build time. Run `cargo sqlx prepare` and commit `.sqlx/` so Docker and CI builds work without a database.
 - **Auth:** sessions via `tower-sessions`, or an external provider.
-- **Frontend tests:** Vitest + `@solidjs/testing-library`.
+- **End-to-end tests:** Playwright against `make up`.
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or [MIT license](LICENSE-MIT), at your option.
