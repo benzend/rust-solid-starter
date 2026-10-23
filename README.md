@@ -13,7 +13,7 @@ Axum API + SolidJS frontend + Postgres, with types shared from Rust to TypeScrip
 
 - [Rust](https://rustup.rs) (the pinned toolchain installs automatically from `rust-toolchain.toml`)
 - [sqlx-cli](https://crates.io/crates/sqlx-cli), only needed when you change SQL: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
-- Node 22.12+ (24 recommended)
+- Node 22.12+ (24 recommended) and [pnpm](https://pnpm.io/installation) 10+ (`npm install -g pnpm`). A different pnpm version switches to the one pinned in `web/package.json` automatically.
 - Docker (or Podman) for Postgres
 
 ## Quick start

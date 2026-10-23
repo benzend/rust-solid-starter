@@ -48,12 +48,16 @@ jobs:
         working-directory: web
     steps:
       - uses: actions/checkout@v5
+      # Installs the pnpm version pinned in package.json's "packageManager".
+      - uses: pnpm/action-setup@v6
+        with:
+          package_json_file: web/package.json
+          cache: true
+          cache_dependency_path: web/pnpm-lock.yaml
       - uses: actions/setup-node@v5
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: npm ci
-      - run: npm run lint
-      - run: npm test
-      - run: npm run build
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
