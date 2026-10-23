@@ -35,6 +35,7 @@ Run `make` to list every command.
 | `make types` | Regenerate TypeScript types from Rust structs |
 | `make check` | fmt, clippy, `.sqlx/` cache check, Biome, and type-check (same as CI) |
 | `make up` | Build and run the production image + Postgres on :3000 |
+| `make deploy` | Deploy to your server with Kamal |
 
 ## How it fits together
 
@@ -79,13 +80,47 @@ Components follow shadcn/ui conventions: Tailwind classes, `cva` variants, and t
 
 ## Production
 
-`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` in your host's environment. Optional: `PORT` (3000), `RUST_LOG`, `DB_MAX_CONNECTIONS` (10), `REQUEST_TIMEOUT_SECS` (10). The image has a `HEALTHCHECK` that runs `server --health-check`, which probes `/api/health` (and through it, the database). It runs anywhere that runs containers, such as Fly.io, Railway, Render, or a VPS.
+`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` in your host's environment. Optional: `PORT` (3000), `RUST_LOG`, `DB_MAX_CONNECTIONS` (10), `REQUEST_TIMEOUT_SECS` (10). The image has a `HEALTHCHECK` that runs `server --health-check`, which probes `/api/health` (and through it, the database). It runs anywhere that runs containers. The template ships a [Kamal](https://kamal-deploy.org) setup for deploying it to your own server (below).
 
 Production checklist:
 
-- Use a managed Postgres or real credentials. The compose credentials are for development only. TLS to the database is supported via rustls.
-- Put TLS (HTTPS) in front, using your platform's proxy or Caddy.
+- Use real credentials. The compose credentials are for development only. TLS to a managed database is supported via rustls (`?sslmode=require`).
 - Revisit the Content-Security-Policy in `lib.rs` if you add third-party scripts, fonts, or analytics.
+
+## Deploying (Kamal)
+
+[Kamal](https://kamal-deploy.org) deploys the Docker image to any Linux server over SSH, with zero-downtime switchovers, automatic HTTPS, and rollbacks. Postgres runs next to the app as a Kamal "accessory", with a nightly backup. Everything lives in `config/deploy.yml`, `.kamal/secrets`, and `.github/workflows/deploy.yml`.
+
+### Make it yours
+
+1. Get a server with Docker-capable Linux and SSH access as root (e.g. Hetzner, DigitalOcean). Point your domain's DNS at it.
+2. In `config/deploy.yml`, fill in every `CHANGE ME`: service name, image, server IP (three places), domain, GitHub user. If the server is ARM, set `builder.arch: arm64` and `runs-on: ubuntu-24.04-arm` in the deploy workflow.
+3. If you renamed the service, update the database host in `.kamal/secrets` (`<service>-db`).
+4. In the GitHub repo settings:
+   - **Secrets:** `POSTGRES_PASSWORD` (`openssl rand -hex 32`) and `SSH_PRIVATE_KEY` (a key whose public half is in the server's `~/.ssh/authorized_keys`).
+   - **Variables:** `KAMAL_ENABLED` = `true`. Until this is set, the deploy workflow does nothing.
+5. First deploy, from your machine: install Kamal (`gem install kamal`, Ruby 3.2+), export `POSTGRES_PASSWORD` (same value as the secret) and `KAMAL_REGISTRY_PASSWORD` (a GitHub token with `write:packages`), then run `kamal setup`. It installs Docker on the server and starts the proxy, Postgres, the backup job, and the app.
+
+After that, every merge to `main` deploys automatically once CI passes. You can also run the **Deploy** workflow by hand from the Actions tab.
+
+### Day to day
+
+| Command | What it does |
+|---|---|
+| `kamal deploy` | Build and ship the current commit |
+| `kamal rollback <version>` | Switch back to an earlier version (the last 5 are kept) |
+| `kamal logs` | Follow the app's logs |
+| `kamal db` | Open `psql` on the production database |
+| `kamal accessory reboot db` | Restart Postgres (deploys never touch it) |
+
+The production image has no shell, so `kamal app exec` only runs commands that exist in it, such as `/app/server --health-check`.
+
+### Things to know
+
+- **Migrations must be backward-compatible.** The app migrates on boot, and the old container keeps serving until the new one passes `/api/health`. Add columns before code uses them; drop them a deploy later. A rollback switches code, not the schema.
+- **Builds are native in CI.** `builder.arch` must match the server. Building for x86 on an Apple Silicon Mac goes through emulation and is very slow for Rust, so let the workflow build, or use an ARM server.
+- **Backups:** the `backup` accessory dumps the database daily and keeps 7 days in `~/<service>-backup/backups` on the server. That protects against bad migrations and deletes, not losing the server. Also turn on your provider's server backups, or sync that folder to object storage. Restore with `pg_restore --clean --if-exists -d app <file>`.
+- **Managed Postgres instead:** delete the `db` and `backup` accessories and set `DATABASE_URL` in `.kamal/secrets` to the provider's URL.
 
 ## Upgrades worth considering
 
