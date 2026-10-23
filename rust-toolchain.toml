@@ -1,0 +1,5 @@
+# Everyone (and CI) gets the same toolchain components automatically.
+# Pin an exact version (e.g. "1.97") if you want fully reproducible builds.
+[toolchain]
+channel = "stable"
+components = ["rustfmt", "clippy"]
