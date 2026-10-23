@@ -9,21 +9,31 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use server::{AppState, app};
 use sqlx::PgPool;
+use std::time::Duration;
 use tower::ServiceExt;
 
 // Each #[sqlx::test] gets its own fresh database with migrations applied,
 // so tests can run in parallel without stepping on each other.
 
 fn test_app(db: PgPool) -> Router {
-    app(AppState { db }, "../web/dist")
+    app(AppState { db }, "../web/dist", Duration::from_secs(10))
 }
 
 async fn send(app: &Router, method: &str, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    send_raw(app, method, uri, body.map(|b| b.to_string())).await
+}
+
+async fn send_raw(
+    app: &Router,
+    method: &str,
+    uri: &str,
+    body: Option<String>,
+) -> (StatusCode, Value) {
     let req = Request::builder()
         .method(method)
         .uri(uri)
         .header("content-type", "application/json")
-        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_string())))
+        .body(body.map_or_else(Body::empty, Body::from))
         .unwrap();
     let res = app.clone().oneshot(req).await.unwrap();
     let status = res.status();
@@ -79,7 +89,7 @@ async fn rejects_blank_titles(db: PgPool) {
 }
 
 #[sqlx::test]
-async fn malformed_json_uses_the_error_shape(db: PgPool) {
+async fn missing_field_uses_the_error_shape(db: PgPool) {
     let (status, body) = send(
         &test_app(db),
         "POST",
@@ -89,6 +99,19 @@ async fn malformed_json_uses_the_error_shape(db: PgPool) {
     .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(body["message"].as_str().unwrap().contains("title"));
+}
+
+#[sqlx::test]
+async fn malformed_json_uses_the_error_shape(db: PgPool) {
+    let (status, body) = send_raw(
+        &test_app(db),
+        "POST",
+        "/api/todos",
+        Some(r#"{"title": "#.to_owned()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(body["message"].as_str().unwrap().contains("JSON"));
 }
 
 #[sqlx::test]

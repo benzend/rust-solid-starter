@@ -1,3 +1,8 @@
 # Where ts-rs writes the generated TypeScript types: straight into the Solid app.
 [env]
 TS_RS_EXPORT_DIR = { value = "../web/src/types", relative = true }
+
+# Build the `query!` macros from the committed .sqlx/ cache instead of a live
+# database, so `cargo build` works without Postgres running (and in Docker).
+# After adding or changing a query, run `make prepare` to refresh the cache.
+SQLX_OFFLINE = "true"

@@ -1,5 +1,5 @@
-# Everyone (and CI) gets the same toolchain components automatically.
-# Pin an exact version (e.g. "1.97") if you want fully reproducible builds.
+# Everyone (and CI) gets the same toolchain automatically. Bump this (and the
+# `rust:` image tag in the Dockerfile) together when you upgrade Rust.
 [toolchain]
-channel = "stable"
+channel = "1.99"
 components = ["rustfmt", "clippy"]

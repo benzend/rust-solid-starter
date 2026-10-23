@@ -16,7 +16,7 @@ use crate::{
 // `#[ts(export)]` writes a matching .ts file to web/src/types (run `make types`).
 // Rename or retype a field here and the frontend stops compiling until it's fixed.
 
-#[derive(Serialize, sqlx::FromRow, TS)]
+#[derive(Serialize, TS)]
 #[ts(export)]
 pub struct Todo {
     pub id: i32,
@@ -45,7 +45,9 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn list(State(state): State<AppState>) -> AppResult<Json<Vec<Todo>>> {
-    let todos = sqlx::query_as::<_, Todo>("SELECT id, title, done FROM todos ORDER BY id")
+    // `query_as!` checks the SQL, column names and types against the schema at
+    // compile time (via the .sqlx/ cache; see `make prepare`).
+    let todos = sqlx::query_as!(Todo, "SELECT id, title, done FROM todos ORDER BY id")
         .fetch_all(&state.db)
         .await?;
     Ok(Json(todos))
@@ -57,10 +59,11 @@ async fn create(
 ) -> AppResult<(StatusCode, Json<Todo>)> {
     let title = validate_title(&input.title)?;
     // Parameters are always bound ($1), never formatted into the SQL string.
-    let todo = sqlx::query_as::<_, Todo>(
+    let todo = sqlx::query_as!(
+        Todo,
         "INSERT INTO todos (title) VALUES ($1) RETURNING id, title, done",
+        title
     )
-    .bind(title)
     .fetch_one(&state.db)
     .await?;
     Ok((StatusCode::CREATED, Json(todo)))
@@ -71,18 +74,20 @@ async fn update(
     Path(id): Path<i32>,
     AppJson(input): AppJson<UpdateTodo>,
 ) -> AppResult<Json<Todo>> {
-    sqlx::query_as::<_, Todo>("UPDATE todos SET done = $1 WHERE id = $2 RETURNING id, title, done")
-        .bind(input.done)
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .map(Json)
-        .ok_or(AppError::NotFound)
+    sqlx::query_as!(
+        Todo,
+        "UPDATE todos SET done = $1 WHERE id = $2 RETURNING id, title, done",
+        input.done,
+        id
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .map(Json)
+    .ok_or(AppError::NotFound)
 }
 
 async fn remove(State(state): State<AppState>, Path(id): Path<i32>) -> AppResult<StatusCode> {
-    let result = sqlx::query("DELETE FROM todos WHERE id = $1")
-        .bind(id)
+    let result = sqlx::query!("DELETE FROM todos WHERE id = $1", id)
         .execute(&state.db)
         .await?;
     if result.rows_affected() == 0 {

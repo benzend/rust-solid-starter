@@ -1,9 +1,11 @@
-# Load .env so DATABASE_URL etc. are available to every command.
--include .env
-export
+# .env is deliberately not included here: Make would parse it as Make syntax and
+# mangle values containing `$`. The server and sqlx-cli read .env themselves.
+# `cargo test` is the exception (#[sqlx::test] only reads the environment), so
+# its recipe loads .env through the shell, which handles quoting properly.
+with-env = set -a; [ ! -f .env ] || . ./.env; set +a;
 
 .DEFAULT_GOAL := help
-.PHONY: help setup db dev server web types test check fmt build up down
+.PHONY: help setup db dev server web types prepare test check fmt build up down
 
 help: ## Show available commands
 	@grep -E '^[a-z-]+:.*## ' Makefile | awk 'BEGIN {FS = ":.*## "}; {printf "  make %-8s %s\n", $$1, $$2}'
@@ -27,11 +29,16 @@ web: ## Run only the Vite dev server
 types: ## Regenerate TypeScript types from the Rust structs
 	cd server && cargo test --lib export_bindings --quiet
 
-test: db types ## Run Rust tests (each gets its own temporary database)
-	cd server && cargo test
+prepare: db ## Refresh the .sqlx/ query cache after changing SQL (commit it)
+	cd server && cargo sqlx prepare -- --all-targets
 
-check: ## Format check, lint and type-check both sides (what CI runs)
+test: db types ## Run Rust and frontend tests (each Rust test gets its own database)
+	$(with-env) cd server && cargo test
+	cd web && npm test
+
+check: db ## Format check, lint, type-check, and verify the .sqlx/ cache (what CI runs)
 	cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+	cd server && cargo sqlx prepare --check -- --all-targets
 	cd web && npm run lint && npm run typecheck
 
 fmt: ## Format everything
