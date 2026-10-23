@@ -12,7 +12,7 @@ help: ## Show available commands
 
 setup: ## First-time setup: .env file and frontend dependencies
 	@test -f .env || cp .env.example .env
-	cd web && npm install
+	cd web && pnpm install
 
 db: ## Start Postgres in Docker (waits until it's ready)
 	docker compose up -d --wait db
@@ -24,7 +24,7 @@ server: ## Run only the Rust API
 	cd server && cargo run
 
 web: ## Run only the Vite dev server
-	cd web && npm run dev
+	cd web && pnpm dev
 
 types: ## Regenerate TypeScript types from the Rust structs
 	cd server && cargo test --lib export_bindings --quiet
@@ -34,19 +34,19 @@ prepare: db ## Refresh the .sqlx/ query cache after changing SQL (commit it)
 
 test: db types ## Run Rust and frontend tests (each Rust test gets its own database)
 	$(with-env) cd server && cargo test
-	cd web && npm test
+	cd web && pnpm test
 
 check: db ## Format check, lint, type-check, and verify the .sqlx/ cache (what CI runs)
 	cd server && cargo fmt --check && cargo clippy --all-targets -- -D warnings
 	cd server && cargo sqlx prepare --check -- --all-targets
-	cd web && npm run lint && npm run typecheck
+	cd web && pnpm lint && pnpm typecheck
 
 fmt: ## Format everything
 	cd server && cargo fmt
-	cd web && npm run format
+	cd web && pnpm format
 
 build: ## Production build of both sides
-	cd web && npm run build
+	cd web && pnpm build
 	cd server && cargo build --release
 
 up: ## Run the production image + Postgres in Docker on :3000

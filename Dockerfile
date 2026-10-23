@@ -2,11 +2,13 @@
 
 # ---- 1. Build the Solid frontend ----
 FROM node:24-alpine AS web
+# Keep in step with "packageManager" in web/package.json.
+RUN npm install -g pnpm@12.15.0
 WORKDIR /app/web
-COPY web/package.json web/package-lock.json ./
-RUN npm ci
+COPY web/package.json web/pnpm-lock.yaml ./
+RUN pnpm install --frozen-lockfile
 COPY web/ ./
-RUN npm run build
+RUN pnpm build
 
 # ---- 2. Build the Rust server ----
 # Keep this tag in step with rust-toolchain.toml.
