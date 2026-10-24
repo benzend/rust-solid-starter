@@ -59,8 +59,9 @@ accessories:
     directories:
       - data:/var/lib/postgresql       # Postgres 18+ path; 17 and older use /var/lib/postgresql/data
 
-  # Nightly pg_dump kept on the server for 7 days. Copy ~/<service>-backup/backups
-  # off the server too (see "Backups" in the README).
+  # Nightly pg_dump kept on the server for 7 days. Uncomment the off-site lines
+  # to also upload an encrypted copy to S3-compatible storage (see "Backups" in
+  # the README). Options are documented at the top of config/db-backup.sh.
   backup:
     image: postgres:18-alpine          # keep the same major version as `db`
     host: 203.0.113.10                 # CHANGE ME: same IP as above
@@ -70,8 +71,19 @@ accessories:
         PGUSER: app
         PGDATABASE: app
         BACKUP_KEEP_DAYS: 7
+        # Off-site copies (any S3-compatible store: R2, B2, S3, ...):
+        # BACKUP_REMOTE: offsite:my-app-backups        # rclone remote:bucket[/path]
+        # BACKUP_AGE_RECIPIENT: age1...                # public key from `age-keygen`
+        # RCLONE_CONFIG_OFFSITE_TYPE: s3
+        # RCLONE_CONFIG_OFFSITE_PROVIDER: Cloudflare   # or AWS, Backblaze (B2's S3 API), Other
+        # RCLONE_CONFIG_OFFSITE_ENDPOINT: https://<account>.r2.cloudflarestorage.com
+        # RCLONE_CONFIG_OFFSITE_NO_CHECK_BUCKET: true  # skip creating the bucket, so the key needs no admin rights
+        # Alert when backups stop:
+        # BACKUP_PING_URL: https://hc-ping.com/<uuid>
       secret:
         - PGPASSWORD:POSTGRES_PASSWORD
+        # - RCLONE_CONFIG_OFFSITE_ACCESS_KEY_ID
+        # - RCLONE_CONFIG_OFFSITE_SECRET_ACCESS_KEY
     files:
       - config/db-backup.sh:/usr/local/bin/db-backup.sh
     directories:

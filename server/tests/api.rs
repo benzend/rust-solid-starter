@@ -174,3 +174,20 @@ async fn echoes_a_client_request_id() {
         .unwrap();
     assert_eq!(res.headers()["x-request-id"], "abc-123");
 }
+
+#[tokio::test]
+async fn sets_security_headers() {
+    let res = panicking_app()
+        .oneshot(Request::get("/nope").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    for name in [
+        "content-security-policy",
+        "strict-transport-security",
+        "x-content-type-options",
+        "x-frame-options",
+        "referrer-policy",
+    ] {
+        assert!(res.headers().contains_key(name), "missing {name}");
+    }
+}

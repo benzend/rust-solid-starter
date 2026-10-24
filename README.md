@@ -95,7 +95,7 @@ Production checklist:
 
 ### Make it yours
 
-1. Get a server with Docker-capable Linux and SSH access as root (e.g. Hetzner, DigitalOcean). Point your domain's DNS at it.
+1. Get a server with Ubuntu 24.04+ or Debian 12+ and SSH access as root by key (e.g. Hetzner, DigitalOcean). When creating it, paste `config/cloud-init.yml` into the provider's "cloud-init" or "user data" field: it turns off password logins, enables a firewall (SSH, HTTP, HTTPS only) and turns on automatic security updates. Point your domain's DNS at it.
 2. In `config/deploy.yml`, fill in every `CHANGE ME`: service name, image, server IP (three places), domain, GitHub user. If the server is ARM, set `builder.arch: arm64` and `runs-on: ubuntu-24.04-arm` in the deploy workflow.
 3. If you renamed the service, update the database host in `.kamal/secrets` (`<service>-db`).
 4. In the GitHub repo settings:
@@ -121,8 +121,38 @@ The production image has no shell, so `kamal app exec` only runs commands that e
 
 - **Migrations must be backward-compatible.** The app migrates on boot, and the old container keeps serving until the new one passes `/api/health`. Add columns before code uses them; drop them a deploy later. A rollback switches code, not the schema.
 - **Builds are native in CI.** `builder.arch` must match the server. Building for x86 on an Apple Silicon Mac goes through emulation and is very slow for Rust, so let the workflow build, or use an ARM server.
-- **Backups:** the `backup` accessory dumps the database daily and keeps 7 days in `~/<service>-backup/backups` on the server. That protects against bad migrations and deletes, not losing the server. Also turn on your provider's server backups, or sync that folder to object storage. Restore with `pg_restore --clean --if-exists -d app <file>`.
+- **Backups:** the `backup` accessory dumps the database daily and keeps 7 days in `~/<service>-backup/backups` on the server. That covers bad migrations and deletes, not losing the server. See [Backups](#backups) for off-site copies.
 - **Managed Postgres instead:** delete the `db` and `backup` accessories and set `DATABASE_URL` in `.kamal/secrets` to the provider's URL.
+
+### Backups
+
+Local dumps alone don't survive losing the server. To also keep encrypted copies in S3-compatible storage (Cloudflare R2, Backblaze B2, AWS S3):
+
+1. Create a bucket and an access key for it. Give the key write access but not delete where the provider allows, so a compromised server can't erase the backups. Add a lifecycle rule to expire old objects (e.g. after 30 days).
+2. Run `age-keygen -o backup-key.txt`. Put the public key (`age1...`) in `BACKUP_AGE_RECIPIENT` and keep `backup-key.txt` somewhere safe that isn't the server, such as a password manager. Without it the backups can't be decrypted.
+3. Uncomment the off-site lines in the `backup` accessory in `config/deploy.yml` and in `.kamal/secrets`, export the two key variables, and run `kamal accessory reboot backup`. Also add both as repository secrets and to the `env:` block in `.github/workflows/deploy.yml`, since CI deploys read `.kamal/secrets` too.
+4. Optional: point `BACKUP_PING_URL` at a dead-man's-switch monitor such as [healthchecks.io](https://healthchecks.io), so you hear about it when backups stop.
+
+**Test a restore once.** `kamal accessory exec backup --reuse "env BACKUP_ONCE=1 sh /usr/local/bin/db-backup.sh"` runs a backup now. Download the `.age` file, then restore it into a local database:
+
+```bash
+age -d -i backup-key.txt <file>.dump.age | pg_restore --clean --if-exists -d app
+```
+
+## Security
+
+What the template does:
+
+- **App:** strict browser security headers (CSP, HSTS, no framing, `nosniff`), SQL checked at compile time, no `unsafe` Rust, and error responses that never include internal details.
+- **Container:** a distroless image with no shell or package manager, running as non-root.
+- **Server:** key-only SSH, a firewall, and automatic security updates via `config/cloud-init.yml`. Postgres is never exposed outside Docker's network.
+- **Dependencies:** `cargo deny` (`server/deny.toml`) fails CI on Rust crates with known vulnerabilities, unapproved licenses, or unknown sources, and CI reruns weekly so new advisories surface. Dependabot opens weekly update PRs for crates, npm packages and GitHub Actions. pnpm and Dependabot both skip versions published in the last day.
+- **CI:** third-party actions are pinned to commit hashes, workflows get a read-only token by default, and the deploy workflow only deploys CI runs from pushes to this repository.
+
+Per-repository settings to turn on (GitHub doesn't copy them from a template):
+
+- **Settings > Code security:** Dependabot alerts and Dependabot security updates, so vulnerable npm packages and crates get fix PRs right away.
+- **Settings > Rules:** protect `main` and require CI to pass, since merging to `main` deploys.
 
 ## Errors and logs
 
