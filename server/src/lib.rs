@@ -80,6 +80,9 @@ pub fn middleware(router: Router, request_timeout: Duration) -> Router {
             "strict-origin-when-cross-origin",
         ))
         .layer(set(header::X_FRAME_OPTIONS, "DENY"))
+        // Browsers only honor this over HTTPS, so it's harmless in local dev.
+        // Once a browser sees it, it refuses plain HTTP for this host for a year.
+        .layer(set(header::STRICT_TRANSPORT_SECURITY, "max-age=31536000"))
         .layer(CompressionLayer::new())
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,

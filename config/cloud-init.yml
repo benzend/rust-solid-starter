@@ -1,0 +1,42 @@
+#cloud-config
+# Baseline hardening for a fresh Ubuntu 24.04+ or Debian 12+ server. Paste this
+# into your provider's "cloud-init" / "user data" field when creating the server,
+# along with your SSH key. Kamal installs Docker itself on `kamal setup`.
+#
+# - SSH: keys only, no passwords. Root stays reachable by key because Kamal
+#   connects as root by default.
+# - Firewall: only SSH, HTTP and HTTPS come in. Docker bypasses ufw for ports
+#   it publishes, so never publish accessory ports (Postgres stays on Docker's
+#   internal network, as config/deploy.yml has it). If you need one from your
+#   machine, use an SSH tunnel.
+# - Security updates install automatically. Kernel updates need a reboot, which
+#   is left to you (`reboot`; Kamal's containers restart on their own).
+
+package_update: true
+package_upgrade: true
+packages:
+  - ufw
+  - unattended-upgrades
+
+ssh_pwauth: false
+
+write_files:
+  # sshd uses the first value it sees; this sorts before 50-cloud-init.conf.
+  - path: /etc/ssh/sshd_config.d/10-hardening.conf
+    content: |
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin prohibit-password
+  - path: /etc/apt/apt.conf.d/20auto-upgrades
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Unattended-Upgrade "1";
+
+runcmd:
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 80/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl restart ssh

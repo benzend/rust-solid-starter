@@ -1,0 +1,29 @@
+# Supply-chain checks run in CI with `cargo deny check`: https://embarkstudios.github.io/cargo-deny/
+
+# Fails on any dependency with a RustSec advisory (vulnerable, unsound, or
+# unmaintained). If an advisory doesn't affect you, ignore it by ID with a reason.
+[advisories]
+ignore = []
+
+# Every dependency's license must be on this list. Adding a crate with a new
+# license fails CI until you decide it's acceptable and add it here.
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",          # unicode tables (icu, unicode-ident)
+    "CDLA-Permissive-2.0",  # webpki-roots certificate data
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "allow"
+wildcards = "deny"
+
+# Only crates.io; no git dependencies or other registries without opting in.
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

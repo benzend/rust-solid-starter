@@ -1,0 +1,31 @@
+# Weekly dependency update PRs, one grouped PR per ecosystem. Security fixes
+# come separately and right away once Dependabot alerts and security updates
+# are on (repo Settings > Code security).
+# https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /server
+    schedule: { interval: weekly }
+    groups:
+      cargo: { patterns: ["*"] }
+
+  # Covers pnpm through pnpm-lock.yaml.
+  - package-ecosystem: npm
+    directory: /web
+    schedule: { interval: weekly }
+    # Matches pnpm's minimumReleaseAge: don't propose versions published in
+    # the last day.
+    cooldown: { default-days: 1 }
+    groups:
+      npm: { patterns: ["*"] }
+
+  # Keeps the pinned action hashes (and their version comments) current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule: { interval: weekly }
+    groups:
+      actions: { patterns: ["*"] }
+
+  # Docker base images are left out on purpose: the rust tag must move together
+  # with rust-toolchain.toml, so bump those by hand.
