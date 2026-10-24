@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { api } from "@/lib/api";
+import { reportError, userMessage } from "@/lib/errors";
 import type { Todo } from "@/types/Todo";
 
 export default function Home() {
@@ -18,7 +19,8 @@ export default function Home() {
     try {
       await action();
     } catch (err) {
-      setError((err as Error).message);
+      setError(userMessage(err));
+      reportError(err);
     }
   };
 

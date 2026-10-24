@@ -1,32 +1,64 @@
-use std::{env, error::Error, net::SocketAddr, str::FromStr, time::Duration};
+use std::{env, error::Error, net::SocketAddr, process::ExitCode, str::FromStr, time::Duration};
 
-use server::{AppState, app};
+use server::{AppState, app, reporting};
 use sqlx::postgres::PgPoolOptions;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::TcpStream,
 };
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> ExitCode {
     // Loads .env from this directory or any parent (the repo root in dev).
     // In Docker/production, real environment variables are used instead.
     dotenvy::dotenv().ok();
 
-    let port: u16 = env_or("PORT", 3000)?;
-
     // `server --health-check` is what Docker's HEALTHCHECK runs.
     if env::args().nth(1).as_deref() == Some("--health-check") {
-        return health_check(port).await;
+        return match health_check().await {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("{err}");
+                ExitCode::FAILURE
+            }
+        };
     }
 
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "server=info,tower_http=info".into()),
-        )
-        .init();
+    // Held until main returns, so the error reporter can flush.
+    let _reporting = init_logging();
 
+    // Startup failures (bad config, unreachable database, failed migration) are
+    // logged like any other error, so they reach the error tracker too.
+    match run().await {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!(error = %err, "server failed");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Logs go to stdout: readable text in dev, JSON lines when LOG_FORMAT=json
+/// (the Dockerfile sets it) so log tools can parse them. Errors also go to the
+/// error tracker, if `reporting` has one.
+fn init_logging() -> reporting::Guard {
+    let filter =
+        EnvFilter::try_from_default_env().unwrap_or_else(|_| "server=info,tower_http=info".into());
+    let json = env::var("LOG_FORMAT").is_ok_and(|format| format == "json");
+    let (reporting_layer, guard) = reporting::init();
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(json.then(|| fmt::layer().json()))
+        .with((!json).then(fmt::layer))
+        .with(reporting_layer)
+        .init();
+    guard
+}
+
+async fn run() -> Result<(), Box<dyn Error>> {
+    let port: u16 = env_or("PORT", 3000)?;
     let database_url = env::var("DATABASE_URL")
         .map_err(|_| "DATABASE_URL is not set. Copy .env.example to .env (or run `make setup`).")?;
     let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "../web/dist".into());
@@ -65,7 +97,8 @@ fn env_or<T: FromStr>(name: &str, default: T) -> Result<T, String> {
 
 /// Exits non-zero unless GET /api/health on this machine returns 200. The
 /// distroless image has no curl, so the binary checks itself.
-async fn health_check(port: u16) -> Result<(), Box<dyn Error>> {
+async fn health_check() -> Result<(), Box<dyn Error>> {
+    let port: u16 = env_or("PORT", 3000)?;
     let probe = async {
         let mut stream = TcpStream::connect(("127.0.0.1", port)).await?;
         stream
