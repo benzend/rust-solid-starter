@@ -1,9 +1,12 @@
-import { A, type RouteSectionProps } from "@solidjs/router";
-import { ErrorBoundary } from "solid-js";
+import { A, type RouteSectionProps, useNavigate } from "@solidjs/router";
+import { ErrorBoundary, Show } from "solid-js";
 import { Button } from "@/components/ui/button";
+import { useAuth } from "@/lib/auth";
 import { reportError } from "@/lib/errors";
 
 export default function Layout(props: RouteSectionProps) {
+  const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const nav = {
     class: "transition-colors hover:text-foreground",
     activeClass: "text-foreground",
@@ -22,6 +25,34 @@ export default function Layout(props: RouteSectionProps) {
           <A href="/about" {...nav}>
             About
           </A>
+          <div class="ml-auto flex items-center gap-3">
+            <Show
+              when={user()}
+              fallback={
+                <Show when={user() === null}>
+                  <A href="/login" {...nav}>
+                    Log in
+                  </A>
+                </Show>
+              }
+            >
+              {(u) => (
+                <>
+                  <span class="text-muted-foreground">{u().email}</span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={async () => {
+                      await logout();
+                      navigate("/login");
+                    }}
+                  >
+                    Log out
+                  </Button>
+                </>
+              )}
+            </Show>
+          </div>
         </nav>
       </header>
       <main class="mx-auto max-w-2xl px-4 py-10">

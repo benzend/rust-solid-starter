@@ -2,6 +2,8 @@ import { MemoryRouter, Route } from "@solidjs/router";
 import { cleanup, render, screen } from "@solidjs/testing-library";
 import { afterEach, expect, it, vi } from "vitest";
 import Layout from "@/components/Layout";
+import { api } from "@/lib/api";
+import { AuthProvider } from "@/lib/auth";
 
 afterEach(() => {
   cleanup();
@@ -13,10 +15,13 @@ it("shows a fallback and reports the error when a page crashes", async () => {
   const Broken = () => {
     throw new Error("render failed");
   };
+  vi.spyOn(api, "me").mockResolvedValue({ id: 1, email: "ada@example.com" });
   render(() => (
-    <MemoryRouter root={Layout}>
-      <Route path="/" component={Broken} />
-    </MemoryRouter>
+    <AuthProvider>
+      <MemoryRouter root={Layout}>
+        <Route path="/" component={Broken} />
+      </MemoryRouter>
+    </AuthProvider>
   ));
 
   expect(await screen.findByText("Something went wrong")).toBeTruthy();

@@ -44,7 +44,10 @@ server/
   migrations/        SQL migrations, compiled in and applied on startup
   .sqlx/             cached query metadata for offline builds (generated, commit it)
   src/lib.rs         router, middleware (compression, timeout, security headers)
-  src/todos.rs       example resource: shared types + handlers
+  src/auth.rs        sign-up, login, sessions, password reset; the CurrentUser extractor
+  src/mailer.rs      the one file that sends email (logs it until you add a service)
+  src/rate_limit.rs  in-memory rate limits for the auth endpoints
+  src/todos.rs       example resource: shared types + per-user handlers
   src/error.rs       AppError -> JSON { message } responses
   src/reporting.rs   the one file that knows about an error tracker (off by default)
   tests/api.rs       API tests against a real database
@@ -52,6 +55,8 @@ web/
   src/types/         GENERATED from Rust by ts-rs; don't edit by hand
   src/lib/api.ts     typed fetch wrapper (+ api.test.ts)
   src/lib/errors.ts  reportError(): the frontend's one error-tracker file
+  src/lib/auth.tsx   who's logged in (useAuth), shared through context
+  src/components/RequireAuth.tsx  wraps routes that need a login
   src/components/ui/ shadcn-style components (yours to edit)
   src/routes/        pages; non-home routes are lazy-loaded
 ```
@@ -69,7 +74,7 @@ Queries use `sqlx::query_as!` / `query!`, so a misspelled column or a wrong type
 ### Adding a feature
 
 1. Add a migration in `server/migrations/` (`<timestamp>_name.sql`).
-2. Add a module like `todos.rs` with types and handlers, and `.merge()` its router in `lib.rs`.
+2. Add a module like `todos.rs` with types and handlers, and `.merge()` its router in `lib.rs`. Take `CurrentUser(user): CurrentUser` in a handler to require a login, and scope queries to `user.id`.
 3. Run `make prepare` (query cache) and `make types` (TypeScript types), then call it from `web/src/lib/api.ts`.
 
 ### Dependency age policy
@@ -80,9 +85,46 @@ pnpm 12 refuses to install any package version published less than a day ago, a 
 
 Components follow shadcn/ui conventions: Tailwind classes, `cva` variants, and the `cn()` helper. Theme colors are CSS variables in `web/src/index.css`, and dark mode follows the OS. For more components (dialog, dropdown, and so on), copy them from the Solid ports [solid-ui](https://github.com/stefan-karger/solid-ui) or [shadcn-solid](https://github.com/hngngn/shadcn-solid), which are built on Kobalte.
 
+## Accounts and login
+
+Email + password accounts with sessions stored in Postgres. There's no auth service to sign up for, and no JWTs: the frontend and API share an origin, so a plain cookie does the job.
+
+- **Sessions:** logging in sets an HttpOnly, SameSite=Lax cookie holding a random token. The database stores only its SHA-256 hash. Sessions last 30 days from the last visit, logging out deletes the session, and a password reset logs out every session.
+- **Passwords:** hashed with Argon2id. Login checks a dummy hash for unknown emails, so response times don't reveal which emails have accounts.
+- **Protecting routes:** on the server, add `CurrentUser(user): CurrentUser` to a handler's arguments (requests without a session get a 401). On the frontend, put routes inside `<Route component={RequireAuth}>` in `index.tsx`, and read the user with `useAuth()`.
+- **Cross-site requests:** requests that change data are rejected when a browser sent them from another site (checked with `Sec-Fetch-Site`, falling back to `Origin`), on top of SameSite cookies.
+- **Rate limits:** login is limited per account and per IP, and sign-up and password reset per IP. The counts live in memory, which fits one app server; with several, move them to Postgres or Redis. IPs come from the last `X-Forwarded-For` entry, which kamal-proxy sets.
+- **Password reset:** "Forgot your password?" emails a link that works once and expires in an hour. The token is in the URL fragment (`#token=`), so it never reaches server logs.
+- **Config:** `APP_URL` is where users open the app (used in emailed links). When it's https, the cookie is also `Secure` and named `__Host-session`.
+
+Sign-up says when an email is already registered. Hiding that would need email verification before an account is created, which is a reasonable next step once email sending is set up. Other things worth adding when an app needs them: email verification, "Sign in with Google/GitHub" (OAuth, as another way to create the same session), passkeys (`webauthn-rs`), and roles or teams.
+
+### Sending email
+
+Until you configure a service, emails aren't sent. In debug builds the whole message is logged, so in dev you can copy the reset link from the server output. Release builds only log that an email wasn't sent, because reset links shouldn't sit in production logs.
+
+To send real email, change `Mailer::send` in `server/src/mailer.rs`; nothing else needs to know. With SMTP (works with Postmark, Resend, SES, Mailgun and others) via [`lettre`](https://crates.io/crates/lettre), roughly:
+
+```rust
+// Cargo.toml: lettre = { version = "0.11", default-features = false,
+//   features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
+// Add `Smtp(AsyncSmtpTransport<Tokio1Executor>)` to `Mailer`, build it in
+// `from_env()` from SMTP_URL (e.g. smtps://user:pass@smtp.example.com), and:
+Self::Smtp(transport) => {
+    let message = lettre::Message::builder()
+        .from(env::var("MAIL_FROM")?.parse()?)
+        .to(email.to.parse()?)
+        .subject(&email.subject)
+        .body(email.text.clone())?;
+    transport.send(message).await?;
+}
+```
+
+Add `SMTP_URL` to `env.secret` and `MAIL_FROM` to `env.clear` in `config/deploy.yml`, and `SMTP_URL` to `.kamal/secrets`. Check the snippet against `lettre`'s current docs; its API changes between versions.
+
 ## Production
 
-`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` in your host's environment. Optional: `PORT` (3000), `RUST_LOG`, `DB_MAX_CONNECTIONS` (10), `REQUEST_TIMEOUT_SECS` (10). The image has a `HEALTHCHECK` that runs `server --health-check`, which probes `/api/health` (and through it, the database). It runs anywhere that runs containers. The template ships a [Kamal](https://kamal-deploy.org) setup for deploying it to your own server (below).
+`docker compose up --build` runs the same image you'd deploy. The image is multi-stage: Node builds the UI, Rust builds the binary, and the result runs on distroless as non-root, at about 53 MB total. Set `DATABASE_URL` and `APP_URL` (the public URL, e.g. `https://app.example.com`) in your host's environment. Optional: `PORT` (3000), `RUST_LOG`, `DB_MAX_CONNECTIONS` (10), `REQUEST_TIMEOUT_SECS` (10). The image has a `HEALTHCHECK` that runs `server --health-check`, which probes `/api/health` (and through it, the database). It runs anywhere that runs containers. The template ships a [Kamal](https://kamal-deploy.org) setup for deploying it to your own server (below).
 
 Production checklist:
 
@@ -96,7 +138,7 @@ Production checklist:
 ### Make it yours
 
 1. Get a server with Ubuntu 24.04+ or Debian 12+ and SSH access as root by key (e.g. Hetzner, DigitalOcean). When creating it, paste `config/cloud-init.yml` into the provider's "cloud-init" or "user data" field: it turns off password logins, enables a firewall (SSH, HTTP, HTTPS only) and turns on automatic security updates. Point your domain's DNS at it.
-2. In `config/deploy.yml`, fill in every `CHANGE ME`: service name, image, server IP (three places), domain, GitHub user. If the server is ARM, set `builder.arch: arm64` and `runs-on: ubuntu-24.04-arm` in the deploy workflow.
+2. In `config/deploy.yml`, fill in every `CHANGE ME`: service name, image, server IP (three places), domain (two places: `proxy.host` and `APP_URL`), GitHub user. If the server is ARM, set `builder.arch: arm64` and `runs-on: ubuntu-24.04-arm` in the deploy workflow.
 3. If you renamed the service, update the database host in `.kamal/secrets` (`<service>-db`).
 4. In the GitHub repo settings:
    - **Secrets:** `POSTGRES_PASSWORD` (`openssl rand -hex 32`) and `SSH_PRIVATE_KEY` (a key whose public half is in the server's `~/.ssh/authorized_keys`).
@@ -144,6 +186,7 @@ age -d -i backup-key.txt <file>.dump.age | pg_restore --clean --if-exists -d app
 What the template does:
 
 - **App:** strict browser security headers (CSP, HSTS, no framing, `nosniff`), SQL checked at compile time, no `unsafe` Rust, and error responses that never include internal details.
+- **Accounts:** Argon2id passwords, hashed session tokens, cross-site request blocking, and rate-limited login. See [Accounts and login](#accounts-and-login).
 - **Container:** a distroless image with no shell or package manager, running as non-root.
 - **Server:** key-only SSH, a firewall, and automatic security updates via `config/cloud-init.yml`. Postgres is never exposed outside Docker's network.
 - **Dependencies:** `cargo deny` (`server/deny.toml`) fails CI on Rust crates with known vulnerabilities, unapproved licenses, or unknown sources, and CI reruns weekly so new advisories surface. Dependabot opens weekly update PRs for crates, npm packages and GitHub Actions. pnpm and Dependabot both skip versions published in the last day.
@@ -209,7 +252,7 @@ Treat these snippets as a starting point and check them against the tracker's cu
 
 ## Upgrades worth considering
 
-- **Auth:** sessions via `tower-sessions`, or an external provider.
+- **More sign-in options:** email verification, OAuth, passkeys (see [Accounts and login](#accounts-and-login)).
 - **End-to-end tests:** Playwright against `make up`.
 
 ## License

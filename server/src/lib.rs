@@ -1,14 +1,18 @@
+pub mod auth;
 pub mod error;
+pub mod mailer;
+pub mod rate_limit;
 pub mod reporting;
 pub mod todos;
 
-use std::{any::Any, time::Duration};
+use std::{any::Any, sync::Arc, time::Duration};
 
 use axum::{
     Json, Router,
     body::Body,
     extract::State,
-    http::{HeaderName, HeaderValue, Request, StatusCode, header},
+    http::{HeaderMap, HeaderName, HeaderValue, Method, Request, StatusCode, header},
+    middleware::{self as axum_middleware, Next},
     response::{IntoResponse, Response},
     routing::get,
 };
@@ -24,7 +28,11 @@ use tower_http::{
 };
 use tracing::Level;
 
-use crate::error::{ApiError, AppError, AppResult};
+use crate::{
+    error::{ApiError, AppError, AppResult},
+    mailer::Mailer,
+    rate_limit::RateLimiter,
+};
 
 /// Header carrying each request's ID. Clients can send their own; otherwise a
 /// UUID is generated. It's on every log line for the request and echoed back
@@ -34,15 +42,33 @@ pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id"
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,
+    /// The app's public URL (APP_URL), used in emailed links. An https URL also
+    /// makes session cookies Secure.
+    pub app_url: Arc<str>,
+    pub mailer: Mailer,
+    pub limiter: RateLimiter,
+}
+
+impl AppState {
+    pub fn new(db: PgPool, app_url: &str, mailer: Mailer) -> Self {
+        Self {
+            db,
+            app_url: app_url.into(),
+            mailer,
+            limiter: RateLimiter::default(),
+        }
+    }
 }
 
 /// Builds the whole app: JSON API under /api, the built Solid app everywhere else.
 pub fn app(state: AppState, static_dir: &str, request_timeout: Duration) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .merge(auth::router())
         .merge(todos::router())
         // Unknown /api routes get a JSON 404 instead of the HTML app.
         .fallback(|| async { AppError::NotFound })
+        .layer(axum_middleware::from_fn(same_origin_only))
         .with_state(state);
 
     // Unknown non-API paths fall back to index.html (with a 200) so client-side
@@ -100,6 +126,36 @@ pub fn middleware(router: Router, request_timeout: Duration) -> Router {
         // Outermost: give the request an ID first, and copy it to the response.
         .layer(PropagateRequestIdLayer::new(REQUEST_ID_HEADER))
         .layer(SetRequestIdLayer::new(REQUEST_ID_HEADER, MakeRequestUuid))
+}
+
+/// Blocks cross-site request forgery: rejects requests that change data when a
+/// browser sent them from another site, which would otherwise carry the
+/// visitor's session cookie. Browsers send Sec-Fetch-Site; older ones only send
+/// Origin. Requests with neither come from non-browser clients, which aren't
+/// at risk.
+async fn same_origin_only(req: Request<Body>, next: Next) -> Response {
+    let reads_only = matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS);
+    if reads_only || is_same_origin(req.headers()) {
+        next.run(req).await
+    } else {
+        AppError::CrossOrigin.into_response()
+    }
+}
+
+fn is_same_origin(headers: &HeaderMap) -> bool {
+    if let Some(site) = headers.get("sec-fetch-site") {
+        return site == "same-origin" || site == "none";
+    }
+    let Some(origin) = headers.get(header::ORIGIN) else {
+        return true;
+    };
+    let origin_host = origin
+        .to_str()
+        .ok()
+        .and_then(|origin| origin.split_once("://"))
+        .map(|(_, host)| host);
+    let host = headers.get(header::HOST).and_then(|h| h.to_str().ok());
+    origin_host.is_some() && origin_host == host
 }
 
 /// The span every request's logs are recorded in, including its request ID.

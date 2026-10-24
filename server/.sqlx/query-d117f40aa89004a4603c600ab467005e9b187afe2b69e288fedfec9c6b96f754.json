@@ -1,38 +1,38 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO todos (title) VALUES ($1) RETURNING id, title, done",
+  "query": "SELECT id, email, password_hash FROM users WHERE email = $1",
   "describe": {
     "columns": [
       {
         "ordinal": 0,
         "name": "id",
-        "type_info": "Int4",
+        "type_info": "Int8",
         "origin": {
           "Table": {
-            "table": "todos",
+            "table": "users",
             "name": "id"
           }
         }
       },
       {
         "ordinal": 1,
-        "name": "title",
+        "name": "email",
         "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "todos",
-            "name": "title"
+            "table": "users",
+            "name": "email"
           }
         }
       },
       {
         "ordinal": 2,
-        "name": "done",
-        "type_info": "Bool",
+        "name": "password_hash",
+        "type_info": "Text",
         "origin": {
           "Table": {
-            "table": "todos",
-            "name": "done"
+            "table": "users",
+            "name": "password_hash"
           }
         }
       }
@@ -48,5 +48,5 @@
       false
     ]
   },
-  "hash": "5ed2e79f4a920f003391141403b4520c3e416d07e2a0287a131ab03e63f6f405"
+  "hash": "d117f40aa89004a4603c600ab467005e9b187afe2b69e288fedfec9c6b96f754"
 }

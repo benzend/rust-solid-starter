@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, title, done FROM todos ORDER BY id",
+  "query": "UPDATE todos SET done = $1 WHERE id = $2 AND user_id = $3 RETURNING id, title, done",
   "describe": {
     "columns": [
       {
@@ -38,7 +38,11 @@
       }
     ],
     "parameters": {
-      "Left": []
+      "Left": [
+        "Bool",
+        "Int4",
+        "Int8"
+      ]
     },
     "nullable": [
       false,
@@ -46,5 +50,5 @@
       false
     ]
   },
-  "hash": "466040ffd820393f8d56881fed9561cb050d0a42b9deac6607ae705b94d0c53c"
+  "hash": "f52cc325e70b146fa05e9344ad350aac1e8cf39dad76641501867dcfe25e4d6d"
 }

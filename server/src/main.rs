@@ -1,6 +1,6 @@
 use std::{env, error::Error, net::SocketAddr, process::ExitCode, str::FromStr, time::Duration};
 
-use server::{AppState, app, reporting};
+use server::{AppState, app, mailer::Mailer, reporting};
 use sqlx::postgres::PgPoolOptions;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -64,6 +64,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let static_dir = env::var("STATIC_DIR").unwrap_or_else(|_| "../web/dist".into());
     let max_connections: u32 = env_or("DB_MAX_CONNECTIONS", 10)?;
     let request_timeout = Duration::from_secs(env_or("REQUEST_TIMEOUT_SECS", 10)?);
+    // Where users reach the app; used in emailed links. https makes cookies Secure.
+    let app_url = env::var("APP_URL").unwrap_or_else(|_| "http://localhost:5173".into());
 
     let db = PgPoolOptions::new()
         .max_connections(max_connections)
@@ -78,7 +80,8 @@ async fn run() -> Result<(), Box<dyn Error>> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("listening on http://localhost:{port}");
 
-    axum::serve(listener, app(AppState { db }, &static_dir, request_timeout))
+    let state = AppState::new(db, &app_url, Mailer::from_env());
+    axum::serve(listener, app(state, &static_dir, request_timeout))
         .with_graceful_shutdown(shutdown_signal())
         .await?;
     Ok(())

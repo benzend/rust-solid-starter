@@ -40,6 +40,7 @@ builder:
 env:
   clear:
     RUST_LOG: server=info,tower_http=info
+    APP_URL: https://app.example.com   # CHANGE ME: same domain as proxy.host
   secret:
     - DATABASE_URL
 
