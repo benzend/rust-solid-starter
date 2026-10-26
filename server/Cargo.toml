@@ -30,6 +30,10 @@ sqlx = { version = "0.9", default-features = false, features = [
 thiserror = "2"
 dotenvy = "0.15"
 ts-rs = "12"
+argon2 = "0.6"
+rand = "0.10"
+sha2 = "0.11"
+hex = "0.4"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
