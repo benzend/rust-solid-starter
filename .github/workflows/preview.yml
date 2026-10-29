@@ -1,0 +1,174 @@
+name: Preview
+
+# After CI passes on a pull request, deploys it to https://pr-<number>.<PREVIEW_DOMAIN>
+# with its own database, runs the Playwright smoke tests against it, scans its
+# logs for errors, and posts the results as one PR comment that's updated on
+# every push. An agent working on the PR reads that comment like any review.
+# preview-teardown.yml removes the preview when the PR closes.
+#
+# Off until the repository variable PREVIEW_ENABLED is "true". Setup is in the
+# README under "Pull request previews".
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+# One run per PR at a time; a newer push replaces a run still in progress.
+concurrency:
+  group: preview-${{ github.event.workflow_run.pull_requests[0].number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    # Only PRs from branches in this repository: this job has deploy secrets
+    # and builds the PR's code, so it must never run for a fork.
+    if: >-
+      vars.PREVIEW_ENABLED == 'true' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      github.event.workflow_run.pull_requests[0].number
+    # Must match builder.arch in config/preview.yml (ubuntu-24.04-arm for arm64).
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: write
+    env:
+      PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+      HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      PREVIEW_HOST: ${{ vars.PREVIEW_HOST }}
+      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+      KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      PREVIEW_POSTGRES_PASSWORD: ${{ secrets.PREVIEW_POSTGRES_PASSWORD }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+          ref: ${{ env.HEAD_SHA }}
+      - name: Note the start time and preview URL
+        run: |
+          echo "STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+          echo "PREVIEW_URL=https://pr-$PR_NUMBER.$PREVIEW_DOMAIN" >> "$GITHUB_ENV"
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: "3.4"
+      - run: gem install kamal -v 2.12.0
+      - uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # `setup` rather than `deploy`: on a PR's first run it also boots the
+      # PR's Postgres; after that it skips the existing database and deploys.
+      - name: Deploy
+        id: deploy
+        run: kamal setup -c config/preview.yml
+
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          package_json_file: e2e/package.json
+          cache: true
+          cache_dependency_path: e2e/pnpm-lock.yaml
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 24
+      - name: Install Playwright
+        working-directory: e2e
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps chromium
+
+      - name: Smoke tests
+        id: e2e
+        working-directory: e2e
+        continue-on-error: true
+        env:
+          BASE_URL: ${{ env.PREVIEW_URL }}
+        run: pnpm test
+
+      # ERROR lines from this run's deploy and tests, with their request IDs.
+      - name: Scan logs for errors
+        id: logs
+        if: always() && steps.deploy.outcome == 'success'
+        run: |
+          kamal app logs -c config/preview.yml --since "$STARTED_AT" --grep '"level":"ERROR"' \
+            | grep '"level":"ERROR"' > error-lines.txt || true
+          echo "count=$(wc -l < error-lines.txt | tr -d ' ')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: artifact
+        if: always() && steps.e2e.outcome != 'skipped'
+        with:
+          name: preview-pr-${{ env.PR_NUMBER }}
+          path: |
+            e2e/results/
+            error-lines.txt
+          retention-days: 14
+
+      - name: Comment on the PR
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY: ${{ steps.deploy.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+          ERRORS: ${{ steps.logs.outputs.count }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          marker="<!-- preview-report -->"
+          results=e2e/results/results.json
+          {
+            echo "$marker"
+            echo "### Preview for \`${HEAD_SHA:0:7}\`"
+            echo
+            if [ "$DEPLOY" != "success" ]; then
+              echo "**Deploy failed.** Nothing was tested. See the [run log]($RUN_URL)."
+            else
+              echo "**URL:** $PREVIEW_URL"
+              echo
+              if [ -f "$results" ]; then
+                passed=$(jq '.stats.expected' "$results")
+                failed=$(jq '.stats.unexpected' "$results")
+                skipped=$(jq '.stats.skipped' "$results")
+                # The tests run in order, so everything after a failure is skipped.
+                echo "**Smoke tests:** $passed passed, $failed failed$([ "$skipped" -gt 0 ] && echo ", $skipped skipped")"
+                jq -r '[.. | objects | select(has("specs")) | .specs[] | select(.ok == false) | .title]
+                  | .[] | "- ❌ " + .' "$results"
+              else
+                echo "**Smoke tests:** didn't produce results. See the [run log]($RUN_URL)."
+              fi
+              echo
+              if [ "${ERRORS:-0}" -gt 0 ]; then
+                echo "**Server errors:** $ERRORS ERROR log lines during this run (first 20):"
+                echo '```'
+                head -20 error-lines.txt
+                echo '```'
+              else
+                echo "**Server errors:** none logged during this run."
+              fi
+            fi
+            echo
+            if [ -n "$ARTIFACT_URL" ]; then
+              echo "Screenshots, traces and the HTML report: [download]($ARTIFACT_URL) · [run]($RUN_URL)"
+            fi
+          } > comment.md
+
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" --paginate \
+            --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$existing" -F body=@comment.md > /dev/null
+          else
+            gh api "repos/$GITHUB_REPOSITORY/issues/$PR_NUMBER/comments" -F body=@comment.md > /dev/null
+          fi
+
+      - name: Fail if the preview isn't healthy
+        if: always()
+        env:
+          DEPLOY: ${{ steps.deploy.outcome }}
+          E2E: ${{ steps.e2e.outcome }}
+          ERRORS: ${{ steps.logs.outputs.count }}
+        run: |
+          [ "$DEPLOY" = "success" ] || { echo "Deploy failed"; exit 1; }
+          [ "$E2E" = "success" ] || { echo "Smoke tests failed"; exit 1; }
+          [ "${ERRORS:-0}" -eq 0 ] || { echo "$ERRORS server errors logged"; exit 1; }

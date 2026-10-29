@@ -12,7 +12,7 @@ updates:
 
   # Covers pnpm through pnpm-lock.yaml.
   - package-ecosystem: npm
-    directory: /web
+    directories: [/web, /e2e]
     schedule: { interval: weekly }
     # Matches pnpm's minimumReleaseAge: don't propose versions published in
     # the last day.

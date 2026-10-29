@@ -1,0 +1,55 @@
+name: Preview teardown
+
+# Removes a pull request's preview (app container, image, Postgres and its
+# data) when the PR is merged or closed. Other PRs' previews and the shared
+# kamal-proxy keep running.
+on:
+  # pull_request_target runs this file from the default branch, not the PR,
+  # so a PR can't change what runs with the preview secrets. Nothing from the
+  # PR is checked out.
+  pull_request_target:
+    types: [closed]
+
+# Shares the deploy's group, so closing a PR cancels a preview still deploying.
+concurrency:
+  group: preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  teardown:
+    if: >-
+      vars.PREVIEW_ENABLED == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      PREVIEW_HOST: ${{ vars.PREVIEW_HOST }}
+      PREVIEW_DOMAIN: ${{ vars.PREVIEW_DOMAIN }}
+      KAMAL_REGISTRY_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+      PREVIEW_POSTGRES_PASSWORD: ${{ secrets.PREVIEW_POSTGRES_PASSWORD }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: ruby/setup-ruby@7f797815d8adceb1c412e7abefdd1ab4abc47a5f # v1.335.0
+        with:
+          ruby-version: "3.4"
+      - run: gem install kamal -v 2.12.0
+      - uses: webfactory/ssh-agent@e83874834305fe9a4a2997156cb26c5de65a8555 # v0.10.0
+        with:
+          ssh-private-key: ${{ secrets.PREVIEW_SSH_PRIVATE_KEY }}
+      # Not `kamal remove`, which also stops the proxy every preview shares.
+      # Each step is a no-op when there's nothing to remove, e.g. a PR closed
+      # before its first preview.
+      - name: Remove the app
+        run: kamal app remove -c config/preview.yml
+      # Not `kamal accessory remove`, which force-removes the postgres image
+      # that other previews' databases are still running.
+      - name: Remove its database
+        run: |
+          kamal accessory stop db -c config/preview.yml
+          kamal accessory remove_container db -c config/preview.yml
+          kamal accessory remove_service_directory db -c config/preview.yml

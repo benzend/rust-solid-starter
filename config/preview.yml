@@ -1,0 +1,73 @@
+# Kamal config for pull request previews: every PR gets its own app and its
+# own Postgres at https://pr-<number>.<PREVIEW_DOMAIN>, on a server kept apart
+# from production. .github/workflows/preview.yml deploys it; preview-teardown.yml
+# removes it when the PR closes. See "Pull request previews" in the README.
+#
+# This is a standalone config (`kamal <command> -c config/preview.yml`), not a
+# destination of deploy.yml: a destination would inherit production's servers
+# and accessories. Keep registry and builder in step with deploy.yml by hand.
+#
+# Values come from the environment, so nothing here is per-app:
+#   PR_NUMBER       the pull request number
+#   PREVIEW_HOST    the preview server's IP
+#   PREVIEW_DOMAIN  a domain whose wildcard (*.PREVIEW_DOMAIN) points at it
+<%
+  pr = ENV.fetch("PR_NUMBER")
+  host = ENV.fetch("PREVIEW_HOST")
+  url_host = "pr-#{pr}.#{ENV.fetch("PREVIEW_DOMAIN")}"
+%>
+
+service: rust-solid-starter-pr-<%= pr %>
+# A separate image, so preview builds never touch the tags production pulls.
+image: benzend/rust-solid-starter-preview  # CHANGE ME: <github-owner>/<repo>-preview, lowercase
+
+servers:
+  web:
+    - <%= host %>
+
+proxy:
+  host: <%= url_host %>
+  ssl: true
+  forward_headers: true
+  app_port: 3000
+  healthcheck:
+    path: /api/health
+
+deploy_timeout: 60
+
+# A preview only needs the newest version to roll back to nothing.
+retain_containers: 1
+
+registry:
+  server: ghcr.io
+  username: benzend                         # CHANGE ME: same as deploy.yml
+  password:
+    - KAMAL_REGISTRY_PASSWORD
+
+builder:
+  arch: amd64                               # must match the preview server's CPU
+
+secrets_path: .kamal/secrets.preview
+
+env:
+  clear:
+    # Debug-level app logs, so a failed check has more to go on.
+    RUST_LOG: server=debug,tower_http=info
+    APP_URL: https://<%= url_host %>
+  secret:
+    - DATABASE_URL
+
+accessories:
+  # One throwaway Postgres per PR: no shared state between previews, and
+  # teardown is just removing the container and its data directory.
+  db:
+    image: postgres:18-alpine
+    host: <%= host %>
+    env:
+      clear:
+        POSTGRES_USER: app
+        POSTGRES_DB: app
+      secret:
+        - POSTGRES_PASSWORD
+    directories:
+      - data:/var/lib/postgresql
