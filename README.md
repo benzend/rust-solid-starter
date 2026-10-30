@@ -35,6 +35,7 @@ Run `make` to list every command.
 | `make types` | Regenerate TypeScript types from Rust structs |
 | `make check` | fmt, clippy, `.sqlx/` cache check, Biome, and type-check (same as CI) |
 | `make up` | Build and run the production image + Postgres on :3000 |
+| `make e2e` | Playwright smoke tests against `make up` (or `BASE_URL`) |
 | `make deploy` | Deploy to your server with Kamal |
 
 ## How it fits together
@@ -181,6 +182,37 @@ Local dumps alone don't survive losing the server. To also keep encrypted copies
 age -d -i backup-key.txt <file>.dump.age | pg_restore --clean --if-exists -d app
 ```
 
+## Pull request previews
+
+Once CI passes on a pull request, the **Preview** workflow deploys it to `https://pr-<number>.<your preview domain>` with its own empty Postgres, then checks it:
+
+1. The Playwright smoke tests in `e2e/` run against the preview: sign up, add, complete and delete a todo, log out and back in, and open the other pages. Uncaught browser errors and any 5xx response fail the test they happen in, with the response's request ID.
+2. The preview's logs since the deploy started are scanned for `ERROR` lines.
+3. One comment on the PR gives the URL, the results, any error lines, and a link to screenshots, traces and the HTML report. Each push updates the same comment.
+
+The workflow fails if the deploy, a test or the log scan fails, so it reads like any other check. That comment is also how a coding agent working on the PR finds out its change broke something, without anyone opening the preview. Closing or merging the PR runs **Preview teardown**, which removes that PR's app, image and database.
+
+Run the same tests locally against the production image with `make up`, then `make e2e`.
+
+### Setting up previews
+
+1. Get a second server, separate from production, and set it up the same way (step 1 of [Make it yours](#make-it-yours), including `cloud-init.yml`). Point a wildcard DNS record (`*.preview.example.com`) at it. Each preview gets its own Let's Encrypt certificate.
+2. In `config/preview.yml`, fill in the two `CHANGE ME` lines: the preview image name and your GitHub user.
+3. In the GitHub repo settings:
+   - **Secrets:** `PREVIEW_POSTGRES_PASSWORD` (`openssl rand -hex 32`) and `PREVIEW_SSH_PRIVATE_KEY` (a key for the preview server only, not production's).
+   - **Variables:** `PREVIEW_HOST` (the server's IP), `PREVIEW_DOMAIN` (`preview.example.com`), and `PREVIEW_ENABLED` = `true`.
+
+There's no first deploy to run by hand: the workflow uses `kamal setup`, which installs Docker on the first run and skips what already exists after that. The workflows run from the default branch, so previews start once these files are on `main`.
+
+To work with one preview from your machine, export `PR_NUMBER`, `PREVIEW_HOST`, `PREVIEW_DOMAIN` and `PREVIEW_POSTGRES_PASSWORD`, then run Kamal with `-c config/preview.yml`, e.g. `kamal app logs -c config/preview.yml`.
+
+### Things to know
+
+- **Only PRs from branches in this repository get previews.** The job holds deploy secrets and builds the PR's code, so anyone who can push a branch can run code with the preview server's key. That's why it has its own server and key. PRs from forks get CI but no preview.
+- **Previews start empty.** Each PR's database runs the migrations and nothing else, and the tests create their own account. Add a seed step if reviewers need data to look at.
+- **Emailed links aren't testable yet.** Previews run release builds, which don't log email contents, so the password reset flow isn't covered. Add an email service or a preview-only outbox to test it.
+- **Size the server to your open PRs.** Each open PR keeps an app container and a Postgres running until it closes.
+
 ## Security
 
 What the template does:
@@ -253,7 +285,6 @@ Treat these snippets as a starting point and check them against the tracker's cu
 ## Upgrades worth considering
 
 - **More sign-in options:** email verification, OAuth, passkeys (see [Accounts and login](#accounts-and-login)).
-- **End-to-end tests:** Playwright against `make up`.
 
 ## License
 
